@@ -135,6 +135,41 @@ dá para corrigir lendo a saída.
 (capturas do mesmo ping nas duas pernas do roteador) e o print do Wireshark em
 `e2-roteador/evidencias/wireshark.png`.
 
+---
+
+## Entrega 3 — O serviço não pode cair
+
+Na E3, o serviço HTTP é executado por três réplicas no segmento B:
+`replica1` (`10.0.20.21`), `replica2` (`10.0.20.22`) e `replica3`
+(`10.0.20.23`). O cliente consulta as réplicas em sequência e usa a primeira
+que responder. Assim, a parada de uma ou duas réplicas não interrompe o
+serviço enquanto ainda houver uma réplica alcançável.
+
+O cliente usa timeout de um segundo por tentativa. Quando nenhuma réplica
+responde, escreve `INDISPONIVEL` e termina com código 1. Essa limitação também
+evita que uma réplica parada ou isolada deixe o cliente bloqueado por mais de
+cinco segundos.
+
+### Evidências
+
+A verificação da E3 testa cinco estados:
+
+1. as três réplicas funcionando;
+2. `replica1` parada, com o serviço atendido por `replica2` ou `replica3`;
+3. `replica1` e `replica2` paradas, com atendimento pela `replica3`;
+4. `replica3` viva, mas isolada por uma partição de rede, exigindo a resposta
+   `INDISPONIVEL` dentro do limite de tempo;
+5. todas as réplicas restauradas, confirmando a recuperação do serviço.
+
+A saída completa dessa verificação está em
+`e3-replicas/evidencias/verificacao.txt`.
+
+O cliente não consegue distinguir, apenas pela ausência de resposta, uma
+réplica morta de uma réplica viva que perdeu a comunicação com a rede. Isso é
+um problema porque os dois cenários parecem iguais para quem chama o serviço:
+é necessário usar timeout e aceitar que a falha pode ser de comunicação, não
+necessariamente do processo.
+
 ### Por que o MAC muda e o IP não
 
 O endereço IP é um endereço **fim a fim** (camada 3): identifica quem enviou o
