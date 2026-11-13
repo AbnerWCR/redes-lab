@@ -17,21 +17,18 @@ echo; echo "=== ENTREGA 3 — o serviço não pode cair ==="; echo
 restaurar
 
 x=$(cron); r=${x%|*}; t=${x#*|}
-case "$r" in
-  replica[123]) ok "com 3 réplicas o serviço responde"; obs "respondeu $r em ${t}s";;
+case "$r" in replica[123]) ok "com 3 réplicas o serviço responde"; obs "respondeu $r em ${t}s";;
   *) nok "com 3 réplicas o serviço NÃO respondeu"; obs "${r:-<vazio>}";; esac
 
 docker stop e3-replica1 >/dev/null 2>&1; sleep 1
 x=$(cron); r=${x%|*}; t=${x#*|}
-case "$r" in
-  replica[23]) ok "réplica1 fora: o serviço continua"; obs "respondeu $r em ${t}s";;
+case "$r" in replica[23]) ok "réplica1 fora: o serviço continua"; obs "respondeu $r em ${t}s";;
   replica1) nok "respondeu 'replica1', que está parada — resposta falsa"; obs "$r";;
   *) nok "réplica1 fora: o serviço caiu"; obs "${r:-<vazio>} em ${t}s";; esac
 
 docker stop e3-replica2 >/dev/null 2>&1; sleep 1
 x=$(cron); r=${x%|*}; t=${x#*|}
-case "$r" in
-  replica3) ok "duas fora: a última réplica sustenta o serviço"; obs "respondeu $r em ${t}s";;
+case "$r" in replica3) ok "duas fora: a última réplica sustenta o serviço"; obs "respondeu $r em ${t}s";;
   *) nok "duas fora: o serviço caiu"; obs "${r:-<vazio>} em ${t}s";; esac
 
 # partição: a réplica continua VIVA, mas inalcançável. Falha diferente de morte.
@@ -44,8 +41,7 @@ else nok "sem nenhuma réplica alcançável o cliente devia dizer INDISPONIVEL";
 
 restaurar
 x=$(cron); r=${x%|*}
-case "$r" in
-  replica[123]) ok "religadas as réplicas, o serviço volta sozinho"; obs "respondeu $r";;
+case "$r" in replica[123]) ok "religadas as réplicas, o serviço volta sozinho"; obs "respondeu $r";;
   *) nok "o serviço não voltou após restaurar"; obs "${r:-<vazio>}";; esac
 
 echo

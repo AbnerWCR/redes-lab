@@ -135,41 +135,6 @@ dá para corrigir lendo a saída.
 (capturas do mesmo ping nas duas pernas do roteador) e o print do Wireshark em
 `e2-roteador/evidencias/wireshark.png`.
 
----
-
-## Entrega 3 — O serviço não pode cair
-
-Na E3, o serviço HTTP é executado por três réplicas no segmento B:
-`replica1` (`10.0.20.21`), `replica2` (`10.0.20.22`) e `replica3`
-(`10.0.20.23`). O cliente consulta as réplicas em sequência e usa a primeira
-que responder. Assim, a parada de uma ou duas réplicas não interrompe o
-serviço enquanto ainda houver uma réplica alcançável.
-
-O cliente usa timeout de um segundo por tentativa. Quando nenhuma réplica
-responde, escreve `INDISPONIVEL` e termina com código 1. Essa limitação também
-evita que uma réplica parada ou isolada deixe o cliente bloqueado por mais de
-cinco segundos.
-
-### Evidências
-
-A verificação da E3 testa cinco estados:
-
-1. as três réplicas funcionando;
-2. `replica1` parada, com o serviço atendido por `replica2` ou `replica3`;
-3. `replica1` e `replica2` paradas, com atendimento pela `replica3`;
-4. `replica3` viva, mas isolada por uma partição de rede, exigindo a resposta
-   `INDISPONIVEL` dentro do limite de tempo;
-5. todas as réplicas restauradas, confirmando a recuperação do serviço.
-
-A saída completa dessa verificação está em
-`e3-replicas/evidencias/verificacao.txt`.
-
-O cliente não consegue distinguir, apenas pela ausência de resposta, uma
-réplica morta de uma réplica viva que perdeu a comunicação com a rede. Isso é
-um problema porque os dois cenários parecem iguais para quem chama o serviço:
-é necessário usar timeout e aceitar que a falha pode ser de comunicação, não
-necessariamente do processo.
-
 ### Por que o MAC muda e o IP não
 
 O endereço IP é um endereço **fim a fim** (camada 3): identifica quem enviou o
@@ -190,3 +155,102 @@ mudam** — o quadro é refeito a cada enlace, enquanto o pacote IP atravessa a
 rede inteira. O `host-a2`, sem rota, nunca chega a gerar esse tráfego: ele
 continua falhando com `Network is unreachable`, o que prova que foi a rota, e
 só ela, que fez `host-a1` atravessar.
+
+---
+
+## Entrega 3 — O serviço não pode cair
+
+### Como o `cliente.sh` funciona
+
+O cliente original falava com uma réplica fixa (`10.0.20.21`): bastava parar
+essa réplica para o serviço "cair", mesmo com as outras duas saudáveis. A nova
+versão (`e3-replicas/cliente.sh`) tenta as três réplicas, uma de cada vez, e
+devolve o nome da **primeira que responder**:
+
+* **Tempo limitado:** cada tentativa usa `curl -m 1` (teto de 1 s). Com as três
+  réplicas inalcançáveis o pior caso é 3 × 1 s = **3 s**, dentro do limite de 5 s
+  do contrato. A verificação mediu 3 s na partição de rede, o caso mais lento.
+* **Nunca anuncia réplica que não respondeu:** só é impresso o que a réplica
+  de fato devolveu, e só se for uma palavra válida no formato `replicaN`.
+  Resposta vazia, erro ou lixo contam como "não respondeu". Se nenhuma responder,
+  o cliente escreve `INDISPONIVEL` e sai com código 1.
+* **Balanceamento simples:** a primeira réplica tentada gira com o relógio
+  (segundo atual módulo 3), para que, com todas no ar, a carga não caia sempre
+  na mesma.
+
+### O cliente distingue uma réplica morta de uma particionada?
+
+**Não distingue, e não tem como distinguir.** Do ponto de vista de quem chama,
+as duas falhas produzem exatamente a mesma observação: o pedido sai e **nenhuma
+resposta volta dentro do prazo**. Réplica parada (`docker stop`) e réplica
+particionada (`docker network disconnect`) são indistinguíveis por esse
+critério: na primeira o processo não existe mais; na segunda ele continua
+vivo, processando e achando que está tudo bem, só que ninguém consegue falar com
+ele. O silêncio não carrega a informação de *por que* houve silêncio. O
+`timeout` é só uma **suspeita**: ele pode estar errado (uma réplica apenas lenta
+ou com a rede congestionada também estoura o teto de 1 s e é descartada
+injustamente), e um prazo maior para ser mais justo estouraria o limite de 5 s.
+
+**Isso é um problema?** Depende do que o serviço faz. Para este serviço — uma
+**leitura sem estado**, em que qualquer réplica devolve a mesma coisa —
+**não é um problema**: tratar morte e partição do mesmo jeito (descartar a
+réplica e passar para a próxima) é a resposta certa, e é justamente isso que dá
+transparência a quem chama. O problema aparece quando o serviço **guarda estado
+ou aceita escritas**. Uma réplica particionada continua viva e pode continuar
+aceitando escritas de clientes do lado dela da rede, enquanto outros clientes
+escrevem nas demais réplicas: o sistema acaba com cópias que divergem (o
+chamado *split-brain*). Do mesmo modo, se o cliente desiste de uma réplica que
+na verdade havia executado o pedido e só não conseguiu responder, e repete o
+pedido em outra, uma operação não idempotente (como "debitar R$ 10") pode ser
+executada duas vezes. Nesses casos são necessários mecanismos que o cliente
+sozinho não tem: operações idempotentes, quórum (só vale a escrita confirmada
+pela maioria das réplicas) e eleição de líder. A lição geral é que, numa rede
+assíncrona, "morto" e "incomunicável" não se distinguem de fora, e é por isso que
+sistemas distribuídos precisam decidir de antemão o que fazer na dúvida.
+
+---
+
+## Entrega 4 — A rota se refaz sozinha
+
+### O que foi feito
+
+* `e4-roteamento/iniciar-roteador.sh`: removidas as rotas estáticas (`case` e
+  `exec sleep`); cada roteador agora sobe o BIRD com o seu arquivo de
+  configuração (`bird-$ROLE.conf`).
+* `e4-roteamento/bird-r2.conf`: o `router id` era `0.0.0.0`; passou a ser
+  `10.0.20.254` (endereço de r2 no segmento B). Os três roteadores têm
+  identidades diferentes: r1 = `10.0.10.254`, r2 = `10.0.20.254`, r3 = `10.0.40.13`.
+* Os três arquivos usam o mesmo esqueleto: `protocol direct` publica as redes
+  conectadas, `protocol rip` troca essa lista com os vizinhos e `protocol kernel`
+  escreve o resultado na tabela de rotas do sistema (sem ele o roteador aprende
+  e não usa).
+
+### Quanto tempo levou para convergir
+
+Com o trânsito 1 derrubado nas duas pontas (como um cabo rompido), a rede
+voltou sozinha em **15 segundos**, medidos pelo `verificar.sh` (ver
+`e4-roteamento/evidencias/verificacao.txt`). O próximo salto de r1 para a rede B
+**mudou**: antes era direto para r2 pelo trânsito 1 (`10.0.30.12`, 1 salto) e
+depois passou a ser o desvio por r3 (`10.0.40.13`, 2 saltos). Com rotas
+estáticas, nada disso acontecia: a rede ficava fora do ar até alguém reescrever
+a rota à mão.
+
+### E numa rede com 50 roteadores em vez de 3?
+
+O tempo **cresceria**, e não pouco. Três razões, todas ligadas ao jeito como o
+vetor de distância funciona:
+
+1. **A informação anda de vizinho em vizinho.** Um roteador só sabe o que o
+   vizinho lhe conta, e cada roteador reenvia a sua tabela de tempos em tempos
+   (a cada 30 s, no RIP). A notícia "a rota X caiu" precisa atravessar a rede
+   salto a salto; quanto maior o diâmetro da rede, mais saltos e mais tempo.
+   Em 3 roteadores a notícia dá poucos saltos; em 50 ela pode dar muitos.
+2. **Contagem até o infinito.** Quando um caminho some, roteadores que dependiam
+   dele podem trocar anúncios entre siclear
+clear
+cd ~/redes-lab-main
+T=$(sed 's/\x1b\[[0-9;]*m//g' e4-roteamento/evidencias/verificacao.txt | grep -o 'levou [0-9]*s' | head -1 | grep -o '[0-9]*')
+if [ -z "$T" ]; then echo "ERRO: sem tempo na evidencia"; elif grep -q "^## Entrega 4" README.md; then echo "Secao ja existe, nada a fazer"; else
+cat >> README.md <<'EOF'
+
+---
